@@ -13,6 +13,7 @@ ui <- fluidPage(
       textInput(inputId = "pvalues",
                 label = "p-values:",
                 value = ".01, .05, .03, .2, .001"),
+      p("(Non-numeric inputs and p-values outside of (0,1] are ignored.)"),
       numericInput("alpha",
                    label = "False Discovery Rate (alpha):",
                    min = 0, max = 1,
@@ -36,7 +37,7 @@ ui <- fluidPage(
         alpha*rank/(# tests). The largest p-value for which this
         critical value is greater than the p-value is identified,
         and all p-values from the smallest through the identified
-        p-value are determined to be significant,"),
+        p-value are determined to be statistically significant."),
 
     ),
 
@@ -61,24 +62,26 @@ server <- function(input, output) {
 
   out_update <- eventReactive(input$update, {
 
+    req(input$alpha)
     pv <- input$pvalues
-    alpha <- input$alpha
     if (pv == "") {
-      stop("Some p-values must be given")
+      return(data.frame(pv = numeric(),
+                        row = numeric(),
+                        rank = numeric(),
+                        critvals = numeric(),
+                        signif = logical()))
     }
     pv <- as.numeric(strsplit(pv, split = ",[:blank:]*")[[1]])
-    if (any(is.na(pv))) {
-      stop("Non-numeric entry in p-value")
+    if (any(!is.na(pv) & pv <= 0) | any(!is.na(pv) & pv > 1)) {
+       pv[(pv >  0) & (pv <= 1)] <- NA
     }
-    if (any(pv <= 0) | any(pv > 1)) {
-      stop("p-values must be in (0,1]")
-    }
-    req(alpha)
+    pv <- pv[!is.na(pv)]
+
     outtab <- data.frame(pv = pv)
     outtab$row <- seq_len(nrow(outtab))
     outtab <- outtab[order(outtab$pv), ]
     outtab$rank <- seq_len(nrow(outtab))
-    outtab$critvals <- outtab$rank*alpha/nrow(outtab)
+    outtab$critvals <- outtab$rank*input$alpha/nrow(outtab)
     thresh <- max(which(outtab$pv < outtab$critvals))
     outtab$signif <- seq_len(nrow(outtab)) <= thresh
 
@@ -99,9 +102,12 @@ server <- function(input, output) {
     outtab <- cbind(seq_len(nrow(outtab)), outtab)
     outtab$signif <- ifelse(outtab$signif, "Yes", "No")
     names(outtab) <- c("Number", "p-value", "Rank",
-                       "Critical Value", "Significant?")
+                       "BH Critical Value", "Significant?")
     print(outtab)
-  }, digits = 3)
+  },
+  digits = 3,
+  hover =  TRUE,
+  align = "rcrcl")
 
   output$plot <- renderPlot({
     outtab <- out_reactive()
