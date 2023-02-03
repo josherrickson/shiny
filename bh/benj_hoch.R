@@ -1,60 +1,28 @@
 library(shiny)
 library(ggplot2)
 
-# Given p-values and an alpha, generate a table of BH critical values along
-# side the conclusion about significance
-bh_correction <- function(pv, alpha, sorted) {
-  if (pv == "") {
-    stop("Some p-values must be given")
-  }
-  pv <- as.numeric(strsplit(pv, split= ",[:blank:]*")[[1]])
-  if (any(is.na(pv))) {
-    stop("Non-numeric entry in p-value")
-  }
-  if (any(pv <= 0) | any(pv > 1)) {
-    stop("p-values must be in (0,1]")
-  }
-  alpha <- as.numeric(alpha)
-  if (is.na(alpha)) {
-    stop("alpha is non-numeric or missing")
-  }
-  if (alpha <= 0 | alpha >= 1) {
-    stop("alpha must be between 0 and 1")
-  }
-  outtab <- data.frame(pv = pv)
-  outtab$row <- seq_len(nrow(outtab))
-  outtab <- outtab[order(outtab$pv), ]
-  outtab$critvals <- seq_len(nrow(outtab))*alpha/nrow(outtab)
-  thresh <- max(which(outtab$pv < outtab$critvals))
-  outtab$signif <- seq_len(nrow(outtab)) <= thresh
-  
-  if (!sorted) {
-    print("Sorting!")
-    outtab <- outtab[order(outtab$row), ]
-  }
-  outtab <- outtab[, names(outtab) != "row"]
-  return(outtab)
-}
-
-
-# Define UI for dataset viewer app ----
 ui <- fluidPage(
   titlePanel("Benjamini–Hochberg procedure"),
 
   sidebarLayout(
     sidebarPanel(
-      p("To control the False Discover Rate across a series of tests, 
-        enter here a list of p-values. Additionally, you may choose your 
-        alpha parameter, which is the proportion of false positives 
+      p("To control the False Discover Rate across a series of tests,
+        enter here a list of p-values. Additionally, you may choose your
+        alpha parameter, which is the proportion of false positives
         among all tests performed."),
       textInput(inputId = "pvalues",
                 label = "p-values:",
                 value = ".01, .05, .03, .2, .001"),
-      textInput(inputId = "alpha",
-                label = "False Discovery Rate (alpha):",
-                value = ".05"),
-      p("By checking the box below, the output will be sorted by 
-        p-value. This may make it more clear what the B-H procedure 
+      numericInput("alpha",
+                   label = "False Discovery Rate (alpha):",
+                   min = 0, max = 1,
+                   value = ".05",
+                   step = .05),
+      actionButton("update", "Submit"),
+      br(),
+      br(),
+      p("By checking the box below, the output will be sorted by
+        p-value. This may make it more clear what the B-H procedure
         is doing (especially in the plot). This is for display purposes
         only and does not affect the calculations."),
       checkboxInput(inputId = "sorted",
@@ -68,7 +36,8 @@ ui <- fluidPage(
         alpha*rank/(# tests). The largest p-value for which this
         critical value is greater than the p-value is identified,
         and all p-values from the smallest through the identified
-        p-value are determined to be significant,")
+        p-value are determined to be significant,"),
+
     ),
 
     mainPanel(
@@ -82,7 +51,7 @@ ui <- fluidPage(
       plotOutput("plot"),
       p("It can occur that a p-value smaller than the largest p-value
         below the critical value is itself larger than its own critical
-        value. This does not represent the problem, nor make the p-value 
+        value. This does not represent the problem, nor make the p-value
         fail to reject.")
     )
   )
@@ -90,27 +59,61 @@ ui <- fluidPage(
 
 server <- function(input, output) {
 
-  output$result <- renderTable({
-    outtab <- bh_correction(input$pvalues, input$alpha, input$sorted)
-    outtab <- cbind(seq_len(nrow(outtab)), outtab)
-    names(outtab) <- c("No.", "p-value", "critical value", "Significant?")
-    print(outtab)
-  }, digits = 3)
-  
-  output$plot <- renderPlot({
-    outtab <- bh_correction(input$pvalues, input$alpha, input$sorted)
-    outtab$rows <- seq_len(nrow(outtab))
-    ggplot(outtab, aes(x = rows)) + 
-      geom_point(aes(y = pv, color = signif), size = 4) + 
-      geom_line(aes(y = critvals)) + 
-      theme(text = element_text(size = 20)) + 
-      xlab("No.") + ylab("") + 
-      guides(color=guide_legend("Sigificant?")) 
-             
-    
+  out_update <- eventReactive(input$update, {
+
+    pv <- input$pvalues
+    alpha <- input$alpha
+    if (pv == "") {
+      stop("Some p-values must be given")
+    }
+    pv <- as.numeric(strsplit(pv, split = ",[:blank:]*")[[1]])
+    if (any(is.na(pv))) {
+      stop("Non-numeric entry in p-value")
+    }
+    if (any(pv <= 0) | any(pv > 1)) {
+      stop("p-values must be in (0,1]")
+    }
+    req(alpha)
+    outtab <- data.frame(pv = pv)
+    outtab$row <- seq_len(nrow(outtab))
+    outtab <- outtab[order(outtab$pv), ]
+    outtab$rank <- seq_len(nrow(outtab))
+    outtab$critvals <- outtab$rank*alpha/nrow(outtab)
+    thresh <- max(which(outtab$pv < outtab$critvals))
+    outtab$signif <- seq_len(nrow(outtab)) <= thresh
+
+    return(outtab)
+  }, ignoreNULL = FALSE)
+
+  out_reactive <- reactive({
+    outtab <- out_update()
+    if (!input$sorted) {
+      outtab <- outtab[order(outtab$row), ]
+    }
+    outtab[, names(outtab) != "row"]
   })
 
+  output$result <- renderTable({
+    outtab <- out_reactive()
 
+    outtab <- cbind(seq_len(nrow(outtab)), outtab)
+    outtab$signif <- ifelse(outtab$signif, "Yes", "No")
+    names(outtab) <- c("Number", "p-value", "Rank",
+                       "Critical Value", "Significant?")
+    print(outtab)
+  }, digits = 3)
+
+  output$plot <- renderPlot({
+    outtab <- out_reactive()
+
+    outtab$rows <- seq_len(nrow(outtab))
+    ggplot(outtab, aes(x = rows)) +
+      geom_point(aes(y = pv, color = signif), size = 4) +
+      geom_line(aes(y = critvals)) +
+      theme(text = element_text(size = 20)) +
+      xlab("Number") + ylab("") +
+      guides(color = guide_legend("Sigificant?"))
+  })
 }
 
 shinyApp(ui, server)
