@@ -2,7 +2,7 @@ library(shiny)
 library(ggplot2)
 
 ui <- fluidPage(
-  titlePanel("Benjamini–Hochberg procedure"),
+  titlePanel("False Discovery Rate procedures"),
 
   sidebarLayout(
     sidebarPanel(
@@ -19,6 +19,14 @@ ui <- fluidPage(
                    min = 0, max = 1,
                    value = ".05",
                    step = .05),
+      p("Which procedure should be run? Benjamini-Yekutieli is more
+        conservative, but is appropriate if the tests generating the p-values
+        are not independent."),
+      radioButtons(inputId = "procedure",
+                   label = "",
+                   choices = list("Benjamini-Hochberg" = "hoch",
+                                  "Benjamini-Yekutieli" = "yeku"),
+                   inline = TRUE),
       actionButton("update", "Submit"),
       br(),
       br(),
@@ -38,6 +46,12 @@ ui <- fluidPage(
         critical value is greater than the p-value is identified,
         and all p-values from the smallest through the identified
         p-value are determined to be statistically significant."),
+      br(),
+      p("The Benjamini-Yekutieli procedure works in a similar fashion, but
+      the critical value is scaled down by an additional factor which is a
+      function of the number of p-values calculated. The Benjamini-Hochberg
+        assumes that the tests are independent of each other; whereas
+        Benjamini-Yekutieli is appropriate if that assumption is not valid.")
 
     ),
 
@@ -77,11 +91,16 @@ server <- function(input, output) {
     }
     pv <- pv[!is.na(pv)]
 
+    m <- length(pv)
+
     outtab <- data.frame(pv = pv)
-    outtab$row <- seq_len(nrow(outtab))
+    outtab$row <- seq_len(m)
     outtab <- outtab[order(outtab$pv), ]
-    outtab$rank <- seq_len(nrow(outtab))
-    outtab$critvals <- outtab$rank*input$alpha/nrow(outtab)
+    outtab$rank <- seq_len(m)
+    outtab$critvals <- outtab$rank*input$alpha/m
+    if (input$procedure == "yeku") {
+      outtab$critvals <- outtab$critvals/(log(m) + -digamma(1) + 1/(2*m))
+    }
     thresh <- max(which(outtab$pv < outtab$critvals))
     outtab$signif <- seq_len(nrow(outtab)) <= thresh
 
